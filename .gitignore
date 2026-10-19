@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Environments
+.venv/
+
+# Tests / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# FLIR proprietary SDK files (confidential licence) - keep the folder only
+vendor/*
+!vendor/.gitkeep
+
+# Recorded data
+*.h5
+*.hdf5
+*.zarr/
+*.raw
+*.raw.json
+*_seq/
+*.npy
+*.tif
+*.tiff

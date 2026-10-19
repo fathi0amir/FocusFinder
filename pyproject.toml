@@ -1,0 +1,38 @@
+[project]
+name = "flir-cam-gui"
+version = "0.1.0"
+description = "PyQt6 live-view and camera-control GUI for FLIR Spinnaker (PySpin) cameras"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "PyQt6>=6.6",
+    "pyqtgraph>=0.13.3",
+    "numpy>=1.26",
+    "h5py>=3.11",
+    "zarr>=3.0",
+    "tifffile>=2024.1",
+]
+
+[project.optional-dependencies]
+# PySpin distributed by FLIR with the Spinnaker SDK (PyPI only has an old,
+# unrelated "pyspin"); resolved from the vendored wheel below.
+spinnaker = ["spinnaker-python==4.4.0.246"]
+
+[project.scripts]
+flir-cam = "flir_cam_gui.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv.sources]
+spinnaker-python = { path = "vendor/spinnaker_python-4.4.0.246-cp312-cp312-win_amd64.whl" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
