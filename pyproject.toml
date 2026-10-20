@@ -33,10 +33,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# pyqtgraph 0.14 downsample() sets ndarray.shape, deprecated in NumPy 2.5; fixed upstream only.
-filterwarnings = [
-    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning:pyqtgraph",
-]
 
 [dependency-groups]
 dev = ["pytest>=8"]

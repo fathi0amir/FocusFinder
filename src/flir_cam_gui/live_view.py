@@ -28,7 +28,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QRectF, Qt, QTimer, pyqtSignal
 
 PALETTES = ("grayscale", "viridis", "inferno", "plasma", "turbo", "magma", "hot")
 
@@ -122,7 +122,9 @@ class LiveViewWidget(pg.GraphicsLayoutWidget):
 
         # --- image plot -----------------------------------------------------
         self.img = _HoverImage(self)
-        self.img.setAutoDownsample(True)  # cheap rendering of large frames
+        # Rendering is cropped/strided to the viewport in _render_image(); pyqtgraph's
+        # autoDownsample block-averages the whole frame on the GUI thread (>100 ms at 15 MP).
+        self.img.setAutoDownsample(False)
         # Needed for "crosshair follows mouse"; ImageItem disables it by default.
         self.img.setAcceptHoverEvents(True)
         self.image_plot = self.addPlot(row=1, col=1)
@@ -213,6 +215,13 @@ class LiveViewWidget(pg.GraphicsLayoutWidget):
         self._hover_timer.setInterval(_HOVER_INTERVAL_MS)
         self._hover_timer.timeout.connect(self._apply_hover)
 
+        # Zoom/pan/resize of a still frame needs a re-render at the new resolution.
+        self._rerender_timer = QTimer(self)
+        self._rerender_timer.setSingleShot(True)
+        self._rerender_timer.setInterval(30)
+        self._rerender_timer.timeout.connect(self._render_image)
+        self.image_plot.getViewBox().sigRangeChanged.connect(
+            lambda *_: self._rerender_timer.start())
         self._hud_base = ""
         self.clear = self.clear_frame
 
@@ -263,7 +272,12 @@ class LiveViewWidget(pg.GraphicsLayoutWidget):
         self._arr = disp
 
         h, w = disp.shape[0], disp.shape[1]
-        self.img.setImage(disp, autoLevels=False, axisOrder="row-major")
+        if self._shape != (h, w):
+            # First frame, or the frame geometry changed (ROI/binning change):
+            # fit the new extent once; user zoom/pan is preserved in between.
+            self._shape = (h, w)
+            self._fit(h, w)
+        self._render_image()
 
         if self._auto_levels and (time.monotonic() - self._levels_at) >= _LEVELS_INTERVAL_S:
             self._apply_levels()
@@ -274,14 +288,27 @@ class LiveViewWidget(pg.GraphicsLayoutWidget):
             # is set to: running with 'auto' off and no frame yet is exactly
             # that case.
             self._apply_levels()
-        if self._shape != (h, w):
-            # First frame, or the frame geometry changed (ROI/binning change):
-            # fit the new extent once; user zoom/pan is preserved in between.
-            self._shape = (h, w)
-            self._fit(h, w)
         self._update_profiles()
         if self._hist_visible:
             self._update_histogram()
+
+    def _render_image(self) -> None:
+        """Draw the visible part of the frame at no more than screen resolution."""
+        a = self._arr
+        if a is None:
+            return
+        h, w = a.shape[0], a.shape[1]
+        vb = self.image_plot.getViewBox()
+        (vx0, vx1), (vy0, vy1) = vb.viewRange()
+        x0, x1 = max(0, int(np.floor(min(vx0, vx1))) - 1), min(w, int(np.ceil(max(vx0, vx1))) + 1)
+        y0, y1 = max(0, int(np.floor(min(vy0, vy1))) - 1), min(h, int(np.ceil(max(vy0, vy1))) + 1)
+        if x1 <= x0 or y1 <= y0:
+            x0, x1, y0, y1 = 0, w, 0, h
+        px, py = vb.viewPixelSize()   # image pixels per screen pixel
+        step = max(1, int(min(px, py))) if px > 0 and py > 0 else 1
+        sub = np.ascontiguousarray(a[y0:y1:step, x0:x1:step])
+        self.img.setImage(sub, autoLevels=False, axisOrder="row-major")
+        self.img.setRect(QRectF(x0, y0, sub.shape[1] * step, sub.shape[0] * step))
 
     def _fit(self, h: int, w: int) -> None:
         """Fit the whole image extent -- an explicit range, never autoRange.
