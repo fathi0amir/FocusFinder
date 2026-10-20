@@ -67,6 +67,10 @@ class MainWindow(QMainWindow):
         self._fps_timer.setInterval(500)
         self._fps_timer.timeout.connect(self._update_fps)
 
+        # The display polls the newest frame at its own pace; acquisition never waits for it.
+        self._display_timer = QTimer(self)
+        self._display_timer.setInterval(33)
+        self._display_timer.timeout.connect(self._poll_frame)
         # Start completely disconnected - user must manually connect
         if demo_default or not PYSPIN_AVAILABLE:
             key = model_default or next(iter(DEMO_MODELS))
@@ -389,7 +393,6 @@ class MainWindow(QMainWindow):
             self.log_line(f"Connecting to camera SN={serial} \u2026")
         self.worker = create_worker(demo=demo, serial=serial,
                                     model_key=self._current_model_key())
-        self.worker.frameReady.connect(self._on_frame)
         self.worker.treeReady.connect(self._on_tree)
         self.worker.rowUpdated.connect(self.browser.row_updated)
         self.worker.saveDone.connect(self._on_save_done)
@@ -403,10 +406,12 @@ class MainWindow(QMainWindow):
         self._sync_camera_picker()   # lock the picker while connected
         self._refresh_timer.start()
         self._fps_timer.start()
+        self._display_timer.start()
 
     def _disconnect_camera(self):
         self._refresh_timer.stop()
         self._fps_timer.stop()
+        self._display_timer.stop()
         if self.worker is not None:
             worker = self.worker
             worker.stop()
@@ -473,27 +478,28 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object, object)
     def _on_frame(self, arr, meta):
-        # A frame posted just before the worker stopped can still be delivered
-        # after a disconnect: drop anything that is not from the live worker.
-        sender = self.sender()
-        if sender is not None and sender is not self.worker:
-            return
         self.live.show_frame(arr, dict(meta) if meta else {})
         self.corr_tab.set_frame(arr)
-        self._frame_times.append(time.monotonic())
-        if len(self._frame_times) > 240:
-            self._frame_times = self._frame_times[-240:]
         self._frames_since_meta += 1
         if self._frames_since_meta % 8 == 0:
             self._update_info(meta)
 
+    def _poll_frame(self):
+        worker = self.worker
+        if worker is None:
+            return
+        item = worker.take_latest_frame()
+        if item is not None:
+            self._on_frame(*item)
+
     def _update_fps(self):
-        if not self._frame_times:
+        # Rate of acquisition, not of what the display happened to draw.
+        times = list(self.worker.acq_times) if self.worker is not None else []
+        if len(times) < 2 or time.monotonic() - times[-1] > 2.0:
             self.lbl_fps.setText("0.0")
             return
-        span = max(0.001, self._frame_times[-1] - self._frame_times[0])
-        n = len(self._frame_times) - 1
-        fps = n / span if span > 0 else 0.0
+        span = max(0.001, times[-1] - times[0])
+        fps = (len(times) - 1) / span
         self._fps = fps
         self._update_rec_length()
         if self.live._arr is not None:

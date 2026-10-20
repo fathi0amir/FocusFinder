@@ -7,8 +7,10 @@ GenICam nodes are never touched from the UI thread.
 
 from __future__ import annotations
 
+import collections
 import copy
 import queue
+import threading
 import time
 import traceback
 from pathlib import Path
@@ -55,6 +57,28 @@ class _WorkerMixin:
         self._display_settings: Dict[str, Any] = {}
         self._last_frame: Optional[tuple] = None  # (arr, meta)
         self._writers: list = []   # streaming recorders still flushing to disk
+        # Latest-frame mailbox: the acquisition thread overwrites it, the GUI
+        # polls it on its own timer, so display speed never throttles acquisition.
+        self._mailbox_lock = threading.Lock()
+        self._mailbox: Optional[tuple] = None
+        self._mailbox_seq = 0
+        self._taken_seq = 0
+        self.acq_times: "collections.deque[float]" = collections.deque(maxlen=240)
+
+    def _publish_frame(self, arr, meta) -> None:
+        self._last_frame = (arr, meta)
+        with self._mailbox_lock:
+            self._mailbox = (arr, meta)
+            self._mailbox_seq += 1
+        self.acq_times.append(time.monotonic())
+
+    def take_latest_frame(self):
+        """Newest (arr, meta) not yet taken by the GUI, else None."""
+        with self._mailbox_lock:
+            if self._mailbox_seq == self._taken_seq:
+                return None
+            self._taken_seq = self._mailbox_seq
+            return self._mailbox
 
     # -- streamed (chunked, asynchronous) recording --------------------------
     def _new_recording(self, path, fmt, n_frames, include_sidecar, blosc,
@@ -561,8 +585,7 @@ class CameraWorker(QThread, _WorkerMixin):
                     raw = bytes(bytearray(image.GetData()[:count]))
                 except Exception:
                     raw = None
-            self._last_frame = (arr, meta)
-            self.frameReady.emit(arr, meta)
+            self._publish_frame(arr, meta)
             if self._recording is not None:
                 rec = self._recording
                 if rec["writer"] is not None:
@@ -1035,8 +1058,7 @@ class DemoWorker(QThread, _WorkerMixin):
             self._run_commands()
             if self._acquiring:
                 arr, meta = self._make_frame()
-                self._last_frame = (arr, meta)
-                self.frameReady.emit(arr, meta)
+                self._publish_frame(arr, meta)
                 self._counter += 1
                 if self._recording is not None:
                     rec = self._recording
