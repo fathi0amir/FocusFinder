@@ -492,12 +492,18 @@ class CameraWorker(QThread, _WorkerMixin):
         self.refresh_tree()
 
     def _do_refresh_rows(self, names: List[str]):
+        cache = self.__dict__.setdefault("_row_cache", {})
         for name in names:
             if self.nodemap is None:
                 return
             node = self.nodemap.GetNode(name)
             info = describe_node(node) if node is not None else None
-            if info:
+            if not info:
+                continue
+            sig = (info.get("value"), info.get("readable"), info.get("writable"),
+                   info.get("min"), info.get("max"))
+            if cache.get(name) != sig:     # unchanged rows cost the GUI nothing
+                cache[name] = sig
                 self.rowUpdated.emit(info)
 
     def _do_save_last(self, path: str, fmt: str, include_sidecar: bool = True,

@@ -256,9 +256,16 @@ class NodeBrowser(QWidget):
         return f"{value} {unit}".strip()
 
     # -- refresh / filter ---------------------------------------------------------
-    def collect_refresh_names(self, limit: int = 300) -> List[str]:
+    def collect_refresh_names(self, limit: int = 40) -> List[str]:
+        """Readable features currently on screen (re-reading all of them stalls the UI)."""
         names: List[str] = []
+        if not self.tree.isVisible():
+            return names
+        view_rect = self.tree.viewport().rect()
         for key, item in self._rows.items():
+            rect = self.tree.visualItemRect(item)
+            if item.isHidden() or rect.height() <= 0 or not rect.intersects(view_rect):
+                continue
             node = item.data(0, Qt.ItemDataRole.UserRole) or {}
             if node.get("readable") and node.get("kind") != cam_defs.KIND_COMMAND:
                 plain = node.get("name") or key.split("#")[0]
