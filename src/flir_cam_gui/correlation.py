@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections import deque
 from typing import Optional
@@ -13,6 +14,8 @@ from PyQt6.QtGui import QImage
 from PyQt6.QtWidgets import (QCheckBox, QFileDialog, QFormLayout, QGroupBox,
                              QHBoxLayout, QLabel, QPushButton, QSpinBox,
                              QVBoxLayout, QWidget)
+
+from .frame_reader import SequenceLoader, describe_source
 
 
 def to_gray(arr: np.ndarray) -> np.ndarray:
@@ -32,9 +35,30 @@ def downsample(img: np.ndarray, factor: int) -> np.ndarray:
 
 
 def load_reference(path: str) -> np.ndarray:
-    """Load a reference image (.npy or any Qt-readable format) as float32 gray."""
-    if path.lower().endswith(".npy"):
-        return to_gray(np.load(path))
+    """Load a reference image as float32 gray.
+
+    .raw/.h5/.hdf5/.zarr (or a Zarr/raw-sequence folder, or the .json sidecar) are
+    read through the saved-stack reader, which takes geometry and dtype from the
+    sidecar and returns only the first frame. .npy and Qt-readable formats
+    are also supported.
+    """
+    lower = path.lower()
+    if (os.path.isdir(path) or lower.endswith((".raw", ".h5", ".hdf5", ".zarr", ".json"))):
+        loader = SequenceLoader(describe_source(path))
+        try:
+            return to_gray(loader.load(0)[0])
+        finally:
+            loader.close()
+    if lower.endswith(".npy"):
+        arr = np.load(path, mmap_mode="r")
+        if arr.ndim == 4 or (arr.ndim == 3 and arr.shape[2] not in (3, 4)):
+            arr = arr[0]
+        return to_gray(np.array(arr))
+    if lower.endswith((".tif", ".tiff")):
+        import tifffile
+
+        with tifffile.TiffFile(path) as tif:
+            return to_gray(tif.pages[0].asarray())
     qimg = QImage(path)
     if qimg.isNull():
         raise ValueError(f"Cannot read image: {path}")
@@ -111,6 +135,8 @@ class CorrelationTab(QWidget):
         controls = QGroupBox("Reference")
         form = QHBoxLayout(controls)
         self.open_btn = QPushButton("Load reference...")
+        self.open_dir_btn = QPushButton("Load folder...")
+        self.open_dir_btn.setToolTip("Load a Zarr store or a folder of raw frames")
         self.use_btn = QPushButton("Use current frame")
         self.clear_btn = QPushButton("Clear history")
         self.running = QCheckBox("Running")
@@ -123,7 +149,7 @@ class CorrelationTab(QWidget):
         self.hist_spin.setRange(10, 2000)
         self.hist_spin.setValue(300)
         self.hist_spin.setToolTip("Number of samples shown")
-        for w in (self.open_btn, self.use_btn, self.clear_btn, self.running):
+        for w in (self.open_btn, self.open_dir_btn, self.use_btn, self.clear_btn, self.running):
             form.addWidget(w)
         form.addWidget(QLabel("Downsample:"))
         form.addWidget(self.ds_spin)
@@ -158,6 +184,7 @@ class CorrelationTab(QWidget):
         lay.addWidget(glw, 1)
 
         self.open_btn.clicked.connect(self._open_reference)
+        self.open_dir_btn.clicked.connect(self._open_reference_dir)
         self.use_btn.clicked.connect(self.use_current_frame)
         self.clear_btn.clicked.connect(self.clear_history)
         self.ds_spin.valueChanged.connect(self._rebuild_correlator)
@@ -192,7 +219,15 @@ class CorrelationTab(QWidget):
     def _open_reference(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "Load reference image", "",
-            "Images (*.png *.tif *.tiff *.bmp *.jpg *.jpeg *.npy)")
+            "Images and stacks (*.png *.tif *.tiff *.bmp *.jpg *.jpeg *.npy "
+            "*.raw *.h5 *.hdf5 *.json);;All files (*)")
+        self._load_reference_path(path)
+
+    def _open_reference_dir(self) -> None:
+        self._load_reference_path(QFileDialog.getExistingDirectory(
+            self, "Load reference folder (Zarr store or raw frames)"))
+
+    def _load_reference_path(self, path: str) -> None:
         if not path:
             return
         try:

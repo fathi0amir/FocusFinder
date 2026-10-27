@@ -539,9 +539,11 @@ def test_mainwindow_viewers_and_display_fanout(qapp, tmp_path):
     assert win.live.orientation == "rotate 90° CW"
     assert win.reader_tab.view.orientation == "rotate 90° CW"
     win.palette_combo.setCurrentText("viridis")
-    win.bits_combo.setCurrentText("12-bit")
+    win.auto_contrast_check.setChecked(False)
+    win.max_spin.setValue(4095)
     assert win.live.auto_levels is False
-    assert win.reader_tab.view.bit_depth == 12
+    assert win.live._manual_levels == (0, 4095)
+    assert win.reader_tab.view.auto_levels is False
 
     # A recorded stack can be opened straight from the main window.
     frames = [np.full((8, 10), i, dtype=np.uint16) for i in range(4)]

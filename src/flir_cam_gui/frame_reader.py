@@ -640,6 +640,8 @@ class FrameReaderTab(QWidget):
         if auto:
             bits = bits or self._bit_depth_hint()
         self.view.set_bit_depth(int(bits or 12), auto)
+        if "manual_min" in s and "manual_max" in s:
+            self.view.set_contrast(auto, s["manual_min"], s["manual_max"], s.get("auto_max"))
 
     def _bit_depth_hint(self) -> int:
         info = self._info

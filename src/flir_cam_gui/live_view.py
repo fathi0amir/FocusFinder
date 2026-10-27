@@ -114,6 +114,8 @@ class LiveViewWidget(pg.GraphicsLayoutWidget):
         self._follow_mouse = True
         self._bit_depth = 16
         self._auto_levels = True
+        self._manual_levels: Optional[Tuple[float, float]] = None
+        self._auto_max: Optional[float] = None
         self._orientation = DEFAULT_ORIENTATION
         self._dragging = False
         self._drag_line: Optional[pg.InfiniteLine] = None
@@ -343,9 +345,15 @@ class LiveViewWidget(pg.GraphicsLayoutWidget):
                 lo, hi = (float(v) for v in np.percentile(sub, (0.5, 99.5)))
             except Exception:
                 lo, hi = float(sub.min()), float(sub.max())
+            if self._auto_max is not None:
+                hi = min(hi, self._auto_max)
+                lo = min(lo, hi - 1.0)
             if hi <= lo:
                 hi = lo + 1.0
             self.img.setLevels([lo, hi])
+        elif self._manual_levels is not None:
+            lo, hi = self._manual_levels
+            self.img.setLevels([lo, max(hi, lo + 1.0)])
         else:
             self.img.setLevels([0, float(2 ** self._bit_depth - 1)])
         self._levels_at = time.monotonic()
@@ -532,6 +540,16 @@ class LiveViewWidget(pg.GraphicsLayoutWidget):
         self._bit_depth = int(bits)
         self._auto_levels = bool(auto_levels)
         self._apply_levels()
+
+    def set_contrast(self, auto: bool, manual_min: float, manual_max: float,
+                     auto_max: Optional[float] = None) -> None:
+        """Auto: percentile stretch capped at *auto_max*; manual: fixed min/max."""
+        self._auto_levels = bool(auto)
+        self._manual_levels = (float(manual_min), float(manual_max))
+        self._auto_max = None if auto_max is None else float(auto_max)
+        self._apply_levels()
+        if self._hist_visible:
+            self._update_histogram(force=True)
 
     def set_follow_mouse(self, follow: bool) -> None:
         self._follow_mouse = bool(follow)

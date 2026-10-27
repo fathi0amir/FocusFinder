@@ -10,9 +10,9 @@ from typing import Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog,
-                             QFormLayout, QGroupBox, QHBoxLayout, QLabel,
+                             QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
-                             QSpinBox, QSplitter, QTabWidget, QVBoxLayout,
+                             QSlider, QSpinBox, QSplitter, QTabWidget, QVBoxLayout,
                              QWidget)
 
 from .correlation import CorrelationTab
@@ -23,6 +23,7 @@ from .savers import write_sidecar
 from . import frame_reader
 
 APP_TITLE = "FLIR Spinnaker Camera GUI"
+_LEVEL_MAX = 65535
 
 
 def format_mmss(seconds: float) -> str:
@@ -167,9 +168,23 @@ class MainWindow(QMainWindow):
         self.palette_combo.addItems(PALETTES)
         self.palette_combo.setCurrentIndex(0)
         self.palette_combo.currentTextChanged.connect(self._palette_changed)
+        # Viewer contrast only; independent of camera exposure and gain.
+        self.auto_contrast_check = QCheckBox("Auto contrast")
+        self.auto_contrast_check.setChecked(True)
+        self.auto_contrast_check.toggled.connect(self._contrast_changed)
+        self.auto_max_spin = QSpinBox()
+        self.auto_max_spin.setRange(0, _LEVEL_MAX)
+        self.auto_max_spin.setSpecialValueText("no limit")
+        self.auto_max_spin.setToolTip("Upper limit for the auto contrast maximum (0 = no limit)")
+        self.auto_max_spin.valueChanged.connect(self._contrast_changed)
         self.bits_combo = QComboBox()
-        self.bits_combo.addItems(["Auto levels", "8-bit", "10-bit", "12-bit", "16-bit"])
+        self.bits_combo.addItems(["8-bit", "10-bit", "12-bit", "16-bit"])
+        self.bits_combo.setCurrentText("16-bit")
+        self.bits_combo.setToolTip(
+            "Pixel bit depth: limits the contrast sliders to 0 .. 2^bits - 1")
         self.bits_combo.currentTextChanged.connect(self._bits_changed)
+        self.min_slider, self.min_spin, min_row = self._level_row(0)
+        self.max_slider, self.max_spin, max_row = self._level_row(_LEVEL_MAX)
         self.follow_mouse = QCheckBox("Crosshair follows mouse")
         self.follow_mouse.setChecked(True)
         self.follow_mouse.toggled.connect(self._follow_mouse_changed)
@@ -181,7 +196,12 @@ class MainWindow(QMainWindow):
             "Fit the image to the viewport (does not move the crosshair)")
         self.reset_view_btn.clicked.connect(self._reset_view)
         disp_form.addRow("Palette:", self.palette_combo)
-        disp_form.addRow("Levels:", self.bits_combo)
+        disp_form.addRow("Bit depth:", self.bits_combo)
+        disp_form.addRow("", self.auto_contrast_check)
+        disp_form.addRow("Auto max:", self.auto_max_spin)
+        disp_form.addRow("Manual min:", min_row)
+        disp_form.addRow("Manual max:", max_row)
+        self._sync_contrast_enabled()
         disp_form.addRow("Orientation:", self.orientation_combo)
         disp_form.addRow("", self.follow_mouse)
         self.hist_check = QCheckBox("Show histogram")
@@ -189,6 +209,23 @@ class MainWindow(QMainWindow):
         disp_form.addRow("", self.hist_check)
         disp_form.addRow("", self.reset_view_btn)
         right_lay.addWidget(disp_grp)
+
+        # output location shared by every save / record action
+        out_grp = QGroupBox("Output location")
+        out_form = QFormLayout(out_grp)
+        self.dir_edit = QLineEdit(str(Path.home()))
+        self.dir_edit.setToolTip("Working directory for saved files")
+        self.dir_btn = QPushButton("Browse...")
+        self.dir_btn.clicked.connect(self._browse_dir)
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(self.dir_edit, 1)
+        dir_row.addWidget(self.dir_btn)
+        self.name_edit = QLineEdit("frame")
+        self.name_edit.setToolTip(
+            "File name; the extension for the chosen format is added if missing")
+        out_form.addRow("Directory:", dir_row)
+        out_form.addRow("File name:", self.name_edit)
+        right_lay.addWidget(out_grp)
 
         # save last frame
         save_grp = QGroupBox("Save last frame")
@@ -204,7 +241,7 @@ class MainWindow(QMainWindow):
         self.blosc_clevel_combo.addItems(["1", "2", "3"])
         self.save_btn = QPushButton("Save last frame...")
         self.save_btn.setEnabled(False)
-        self.save_btn.clicked.connect(self._save_last)
+        self.save_btn.clicked.connect(lambda _checked=False: self._save_last())
         save_form.addRow("Format:", self.save_fmt_combo)
         save_form.addRow("Blosc (Zarr):", self.blosc_cname_combo)
         save_form.addRow("Compression level:", self.blosc_clevel_combo)
@@ -554,14 +591,14 @@ class MainWindow(QMainWindow):
 
     # -------------------------------------------------------------- displays
     def current_display_settings(self):
-        text = self.bits_combo.currentText()
-        mapping = {"8-bit": 8, "10-bit": 10, "12-bit": 12, "16-bit": 16}
-        auto = text == "Auto levels"
         settings = {
             "palette": self.palette_combo.currentText(),
             "follow_mouse": self.follow_mouse.isChecked(),
-            "auto_levels": auto,
-            "bit_depth": None if auto else mapping[text],
+            "auto_levels": self.auto_contrast_check.isChecked(),
+            "bit_depth": self._bits(),
+            "manual_min": self.min_spin.value(),
+            "manual_max": self.max_spin.value(),
+            "auto_max": self.auto_max_spin.value() or None,
             "orientation": self.orientation_combo.currentText(),
         }
         return settings
@@ -569,8 +606,51 @@ class MainWindow(QMainWindow):
     def _palette_changed(self, name):
         self._apply_display_settings()
 
-    def _bits_changed(self, text):
+    def _bits_changed(self, *_):
+        top = (1 << self._bits()) - 1
+        was_top = self.max_spin.value() >= self.max_spin.maximum()
+        widgets = (self.min_slider, self.min_spin, self.max_slider, self.max_spin,
+                   self.auto_max_spin)
+        for w in widgets:
+            w.blockSignals(True)
+            w.setMaximum(top)
+        if was_top:
+            self.max_spin.setValue(top)
+            self.max_slider.setValue(top)
+        for w in widgets:
+            w.blockSignals(False)
+        self._contrast_changed()
+
+    def _bits(self) -> int:
+        return int(self.bits_combo.currentText().split("-")[0])
+
+    def _contrast_changed(self, *_):
+        self._sync_contrast_enabled()
         self._apply_display_settings()
+
+    def _sync_contrast_enabled(self):
+        auto = self.auto_contrast_check.isChecked()
+        self.auto_max_spin.setEnabled(auto)
+        for w in (self.min_slider, self.min_spin, self.max_slider, self.max_spin):
+            w.setEnabled(not auto)
+
+    def _level_row(self, value: int):
+        """Slider and spin box kept in sync; returns (slider, spin, layout widget)."""
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(0, _LEVEL_MAX)
+        spin = QSpinBox()
+        spin.setRange(0, _LEVEL_MAX)
+        slider.setValue(value)
+        spin.setValue(value)
+        slider.valueChanged.connect(spin.setValue)
+        spin.valueChanged.connect(slider.setValue)
+        spin.valueChanged.connect(self._contrast_changed)
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(slider, 1)
+        lay.addWidget(spin)
+        return slider, spin, row
 
     def _orientation_changed(self, name):
         self._apply_display_settings()
@@ -580,17 +660,38 @@ class MainWindow(QMainWindow):
         record."""
         settings = self.current_display_settings()
         self.live.set_palette(settings["palette"])
-        self.live.set_bit_depth(settings["bit_depth"] or self.live.bit_depth,
-                                settings["auto_levels"])
+        self.live.set_contrast(settings["auto_levels"], settings["manual_min"],
+                               settings["manual_max"], settings["auto_max"])
         self.live.set_orientation(settings["orientation"])
         self.reader_tab.set_display_settings(settings)
         if self.worker:
             self.worker.set_display_settings(settings)
 
     # ---------------------------------------------------------------- saving
-    def _default_suggest(self, ext: str) -> str:
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        return str(Path.home() / f"frame_{stamp}.{ext}")
+    def _browse_dir(self):
+        path = QFileDialog.getExistingDirectory(
+            self, "Select working directory", self.dir_edit.text() or str(Path.home()))
+        if path:
+            self.dir_edit.setText(path)
+
+    def _output_path(self, ext: str, what: str = "file") -> Optional[str]:
+        """Build directory + name + extension from the path fields, or None to cancel."""
+        directory = Path(self.dir_edit.text().strip() or Path.home()).expanduser()
+        name = self.name_edit.text().strip() or "frame_" + time.strftime("%Y%m%d_%H%M%S")
+        allowed = {"h5": {".h5", ".hdf5"}, "tif": {".tif", ".tiff"}}.get(ext, {"." + ext})
+        if Path(name).suffix.lower() not in allowed:
+            name += "." + ext
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, "Invalid directory", f"{directory}\n\n{exc}")
+            return None
+        path = directory / name
+        if path.exists() and QMessageBox.question(
+                self, "Overwrite?", f"{path} already exists. Overwrite this {what}?"
+        ) != QMessageBox.StandardButton.Yes:
+            return None
+        return str(path)
 
     def _blosc_params(self):
         return {
@@ -611,13 +712,7 @@ class MainWindow(QMainWindow):
         if fmt is None:
             fmt = ("raw", "hdf5", "zarr", "npy", "tiff")[self.save_fmt_combo.currentIndex()]
         ext = {"raw": "raw", "hdf5": "h5", "zarr": "zarr", "npy": "npy", "tiff": "tif"}[fmt]
-        filters = {"raw": "Raw image (*.raw)",
-                   "hdf5": "HDF5 (*.h5 *.hdf5)",
-                   "zarr": "Zarr store (*.zarr)",
-                   "npy": "NumPy array (*.npy)",
-                   "tiff": "TIFF (*.tif *.tiff)"}[fmt]
-        path, _ = QFileDialog.getSaveFileName(
-            self, f"Save last frame ({fmt})", self._default_suggest(ext), filters)
+        path = self._output_path(ext)
         if not path:
             return
         self.worker.submit({"action": "save_last", "path": path, "fmt": fmt,
@@ -636,14 +731,10 @@ class MainWindow(QMainWindow):
                  "zarr_sequence": "Zarr", "npy_sequence": "npy",
                  "tiff_sequence": "TIFF"}[fmt]
         n = int(self.rec_count.value())
-        path, _ = QFileDialog.getSaveFileName(
-            self, f"Record {n} frames ({plain})",
-            self._default_suggest({"hdf5_sequence": "hdf5", "raw_sequence": "raw_seq",
-                                   "zarr_sequence": "zarr", "npy_sequence": "npy",
-                                   "tiff_sequence": "tif"}[fmt]),
-            {"hdf5_sequence": "HDF5 (*.h5 *.hdf5)", "raw_sequence": "Raw sequence files (*)",
-             "zarr_sequence": "Zarr store (*.zarr)", "npy_sequence": "NumPy array (*.npy)",
-             "tiff_sequence": "TIFF stack (*.tif *.tiff)"}[fmt])
+        path = self._output_path(
+            {"hdf5_sequence": "h5", "raw_sequence": "raw_seq",
+             "zarr_sequence": "zarr", "npy_sequence": "npy",
+             "tiff_sequence": "tif"}[fmt], f"{plain} recording")
         if not path:
             return
         self.worker.submit({
@@ -661,9 +752,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Nothing to save",
                                     "Connect to a camera first.")
             return
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save camera settings snapshot", self._default_suggest("json"),
-            "JSON (*.json)")
+        path = self._output_path("json", "snapshot")
         if not path:
             return
         write_sidecar(Path(path), {
