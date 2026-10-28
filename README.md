@@ -130,6 +130,49 @@ hardware, and saturation fraction is reported in frame metadata.
    - `file` — geometry, dtype, byte order, byte count,
    - `display_settings` — palette/bit-depth/levels used in the live view.
 
+### Sidecar schema
+
+**JSON sidecar** (`<name>.json`, or `sequence.json` inside a raw-sequence folder).
+Global attributes only:
+
+| Key | Content |
+| --- | --- |
+| `schema` | Sidecar schema version (`1`) |
+| `application`, `app_version` | Writer name and version |
+| `host`, `platform`, `python` | Machine that saved the file |
+| `saved_at_utc` | ISO-8601 UTC save time |
+| `file` | Pixel payload: `name`, `type`, `width`, `height`, `channels`, `shape`, `dtype`, `frames`, `pixel_format`, `byte_order`, plus format extras (e.g. `compressor`, `streamed`, `chunk_frames`) |
+| `camera_settings` | Full node-map snapshot (camera + stream) |
+| `display_settings` | Live-view settings active when saved (optional) |
+| `frame_metadata` | Single frame: that frame's metadata dict. Sequence: `{"frames_file", "format": "parquet", "count", "constant"}` |
+
+`frame_metadata.constant` holds the values identical for every frame (taken from the
+first frame): `camera_model`, `sensor`, `bit_depth`, `width`, `height`,
+`pixel_format`, `acquired_shape`, `acquired_dtype`, `chunk`.
+
+**Parquet sidecar** (`<name>.frames.parquet`, `sequence.frames.parquet` for raw
+sequences). One row per frame, zstd-compressed; null values are omitted when read back.
+
+| Column | Type | Content |
+| --- | --- | --- |
+| `frame_id` | int | Camera frame counter |
+| `device_timestamp_ns` | int | Camera timestamp, ns |
+| `received_at_ns` | int | Host receive time, ns since epoch |
+| `host_timestamp_s` | float | Host time, s since epoch |
+| `fps` | float | `1e9 / (t_i - t_(i-1))` from `device_timestamp_ns`; first frame uses the next gap |
+| `saturated_fraction` | float | Fraction of saturated pixels (simulated camera) |
+| `file` | string | Frame file name (raw sequences only) |
+
+Columns are the union of the per-frame metadata keys, so a camera may add more.
+
+```python
+import json, pyarrow.parquet as pq
+side = json.load(open("seq.h5.json"))
+frames = pq.read_table("seq.h5.frames.parquet").to_pylist()   # one dict per frame
+```
+
+Older recordings with inline `frame_metadata.frames` in the JSON still open.
+
 ### Reading a raw file back
 
 The easiest way is the **Saved images** tab in the GUI. To do it in Python:

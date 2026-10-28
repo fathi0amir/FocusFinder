@@ -56,7 +56,70 @@ def build_sidecar(
     return sidecar
 
 
+#: per-frame keys identical for every frame; kept once in the JSON, not in parquet
+GLOBAL_FRAME_KEYS = ("camera_model", "sensor", "bit_depth", "width", "height",
+                     "pixel_format", "acquired_shape", "acquired_dtype", "chunk")
+
+
+def frames_parquet_path(sidecar_path: Path) -> Path:
+    """Parquet file holding the per-frame metadata of *sidecar_path*."""
+    s = str(sidecar_path)
+    return Path((s[:-len(".json")] if s.lower().endswith(".json") else s) + ".frames.parquet")
+
+
+def write_frames_parquet(path: Path, frames: Sequence[Dict[str, Any]]) -> None:
+    """One row per frame, one column per metadata key."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    keys: List[str] = []
+    for fr in frames:
+        for k in fr:
+            if k not in keys:
+                keys.append(k)
+    cols = {}
+    for k in keys:
+        values = [fr.get(k) for fr in frames]
+        try:
+            cols[k] = pa.array(values)
+        except Exception:  # mixed / unsupported types
+            cols[k] = pa.array([None if v is None else json.dumps(v, default=_json_default)
+                                for v in values], type=pa.string())
+    pq.write_table(pa.table(cols), path, compression="zstd")
+
+
+def read_frames_parquet(path: Path) -> List[Dict[str, Any]]:
+    import pyarrow.parquet as pq
+
+    rows = pq.read_table(path).to_pylist()
+    return [{k: v for k, v in row.items() if v is not None} for row in rows]
+
+
+def _add_fps(frames: List[Dict[str, Any]]) -> None:
+    """Instantaneous fps from the gap to the previous frame (first frame uses the next gap)."""
+    ts = [fr.get("device_timestamp_ns", fr.get("received_at_ns")) for fr in frames]
+    for i, fr in enumerate(frames):
+        if "fps" in fr or len(frames) < 2:
+            continue
+        a, b = (ts[i - 1], ts[i]) if i else (ts[0], ts[1])
+        if a is not None and b is not None and b > a:
+            fr["fps"] = 1e9 / (b - a)
+
+
 def write_sidecar(path: Path, sidecar: Dict[str, Any]) -> None:
+    """Write the JSON sidecar; a per-frame list goes to a parquet file instead."""
+    path = Path(path)
+    meta = sidecar.get("frame_metadata")
+    if isinstance(meta, dict) and isinstance(meta.get("frames"), list):
+        frames = [dict(m or {}) for m in meta["frames"]]
+        constants = {k: frames[0][k] for k in GLOBAL_FRAME_KEYS if frames and k in frames[0]}
+        frames = [{k: v for k, v in fr.items() if k not in GLOBAL_FRAME_KEYS} for fr in frames]
+        _add_fps(frames)
+        pq_path = frames_parquet_path(path)
+        write_frames_parquet(pq_path, frames)
+        sidecar = {**sidecar, "frame_metadata": {
+            "frames_file": pq_path.name, "format": "parquet", "count": len(frames),
+            "constant": constants}}
     path.write_text(json.dumps(sidecar, indent=2, default=_json_default), encoding="utf-8")
 
 

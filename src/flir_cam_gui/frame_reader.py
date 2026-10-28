@@ -83,15 +83,30 @@ def describe_source(path: str | Path) -> SequenceInfo:
     return _describe_file(p)
 
 
-def _read_sidecar(path: Path) -> Dict[str, Any]:
-    sidecar = Path(str(path) + ".json")
+def _load_sidecar_json(sidecar: Path) -> Dict[str, Any]:
+    """Read a sidecar, pulling per-frame metadata in from its parquet file."""
     if not sidecar.exists():
         return {}
     try:
         data = json.loads(sidecar.read_text(encoding="utf-8"))
     except Exception:
         return {}
-    return data if isinstance(data, dict) else {}
+    if not isinstance(data, dict):
+        return {}
+    meta = data.get("frame_metadata")
+    if isinstance(meta, dict) and meta.get("frames_file"):
+        from .savers import read_frames_parquet
+        try:
+            const = meta.get("constant") or {}
+            rows = read_frames_parquet(sidecar.parent / meta["frames_file"])
+            data["frame_metadata"] = {"frames": [{**const, **r} for r in rows]}
+        except Exception:
+            data["frame_metadata"] = {}
+    return data
+
+
+def _read_sidecar(path: Path) -> Dict[str, Any]:
+    return _load_sidecar_json(Path(str(path) + ".json"))
 
 
 def _sidecar_frames(sidecar: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -164,12 +179,7 @@ def _describe_raw_single(path: Path) -> SequenceInfo:
 
 
 def _describe_raw_dir(d: Path, raws: List[Path]) -> SequenceInfo:
-    sidecar: Dict[str, Any] = {}
-    if (d / "sequence.json").exists():
-        try:
-            sidecar = json.loads((d / "sequence.json").read_text(encoding="utf-8"))
-        except Exception:
-            sidecar = {}
+    sidecar = _load_sidecar_json(d / "sequence.json")
     file_info = sidecar.get("file") or {}
     frames = _sidecar_frames(sidecar)
     dtype = _dtype_from_sidecar(file_info, frames)

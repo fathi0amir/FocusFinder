@@ -89,7 +89,10 @@ def test_hdf5_sequence(tmp_path: Path):
     sc_path = out.with_suffix(out.suffix + ".json")
     sidecar = json.loads(sc_path.read_text(encoding="utf-8"))
     assert sidecar["file"]["frames"] == 3
-    assert sidecar["frame_metadata"]["frames"][1]["frame_id"] == 1
+    fm = sidecar["frame_metadata"]
+    assert fm["format"] == "parquet" and "frames" not in fm
+    rows = savers.read_frames_parquet(sc_path.with_name(fm["frames_file"]))
+    assert rows[1]["frame_id"] == 1
 
 
 def test_sequence_rejects_mixed_shapes(tmp_path):

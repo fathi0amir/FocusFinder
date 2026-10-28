@@ -33,7 +33,7 @@ def test_hdf5_all_frames_flushed(tmp_path):
     with h5py.File(rec.out_path) as f:
         np.testing.assert_array_equal(f["images"][...], data)
     side = json.loads(rec.out_path.with_suffix(".h5.json").read_text())
-    assert len(side["frame_metadata"]["frames"]) == N
+    assert side["frame_metadata"]["count"] == N
 
 
 def test_npy_header_patched(tmp_path):
