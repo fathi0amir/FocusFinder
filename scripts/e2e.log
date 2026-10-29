@@ -1,0 +1,20 @@
+app ok
+window ok
+camera connected
+timers armed
+zarr single shape: (2048, 1536) uint16
+zarr seq dataset: (6, 2048, 1536)
+saves: [(True, 'frame_a.raw'), (True, 'frame_b.h5'), (True, 'frame_c.zarr'), (True, 'seq.zarr')] frames: 12
+live view reported (1536, 2048) | hud:   4.4 fps  |  1536x2048  Mono16  #11
+live view renders: 1358x897px, value spread 255
+live view aspect: 1536x2048 drawn as 559.9x746.6 px (ratio 0.7500 vs sensor 0.7500), pixel 2.74324 == 2.74324
+crosshair dragged during acquisition: [599.8, 898.8, 1200.5] | frame 15 | horizontal line stayed at 1000
+reader zarr sequence frame 0 ok (2048, 1536) 0 / 6
+reader seek ok 4 / 6
+reader playback ok, stopped at 5 / 6
+reader raw single ok 0 / 1
+saved image viewer renders: 1346x761px, value spread 249
+saved image viewer aspect: 1536x2048 drawn as 464.3x619.1 px (ratio 0.7500 vs sensor 0.7500), pixel 3.30823 == 3.30823
+reader hdf5 single ok (2048, 1536) 0 / 1
+ALL-GOOD
+after exec; frames= 18 saves= [(True, 'frame_a.raw'), (True, 'frame_b.h5'), (True, 'frame_c.zarr'), (True, 'seq.zarr')]

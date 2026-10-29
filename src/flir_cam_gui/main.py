@@ -11,7 +11,8 @@ from typing import Optional
 from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog,
                              QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-                             QMainWindow, QMessageBox, QPlainTextEdit, QPushButton,
+                             QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
+                             QPushButton,
                              QSlider, QSpinBox, QSplitter, QTabWidget, QVBoxLayout,
                              QWidget)
 
@@ -263,28 +264,25 @@ class MainWindow(QMainWindow):
         self.rec_btn = QPushButton("Record N frames...")
         self.rec_btn.setEnabled(False)
         self.rec_btn.clicked.connect(self._toggle_record)
-        self.stream_check = QCheckBox("Stream to disk in chunks")
-        self.stream_check.setToolTip(
-            "Write frames to disk in a background thread while recording instead of "
-            "holding the whole stack in RAM. Acquisition never waits for the disk.")
         self.chunk_spin = QSpinBox()
         self.chunk_spin.setRange(1, 100000)
         self.chunk_spin.setValue(32)
         self.chunk_spin.setSuffix(" frames")
-        self.chunk_spin.setEnabled(False)
         self.chunk_spin.setToolTip("Number of frames written to disk per chunk")
-        self.stream_check.toggled.connect(self.chunk_spin.setEnabled)
+        self.rec_progress = QProgressBar()
+        self.rec_progress.setTextVisible(True)
+        self.rec_progress.setVisible(False)
         self.rec_length_lbl = QLabel("-")
         self.rec_last_lbl = QLabel("-")
         self.rec_last_lbl.setWordWrap(True)
         self.rec_count.valueChanged.connect(self._update_rec_length)
         rec_form.addRow("Format:", self.rec_fmt_combo)
         rec_form.addRow("Frames:", self.rec_count)
-        rec_form.addRow("", self.stream_check)
         rec_form.addRow("Chunk size:", self.chunk_spin)
         rec_form.addRow("Length (m:ss):", self.rec_length_lbl)
         rec_form.addRow("Last recorded:", self.rec_last_lbl)
         rec_form.addRow("", self.rec_btn)
+        rec_form.addRow(self.rec_progress)
         self._update_rec_length()
         right_lay.addWidget(rec_grp)
         right_lay.addStretch(1)
@@ -465,6 +463,7 @@ class MainWindow(QMainWindow):
         self.save_btn.setEnabled(False)
         self.rec_btn.setEnabled(False)
         self._recording = False
+        self.rec_progress.setVisible(False)
         self.rec_btn.setText("Record N frames...")
         self.live.clear_frame()
         self.corr_tab.clear_frame()
@@ -528,6 +527,28 @@ class MainWindow(QMainWindow):
         item = worker.take_latest_frame()
         if item is not None:
             self._on_frame(*item)
+        self._update_rec_progress(worker)
+
+    def _show_progress(self, value: int, total: int, phase: str) -> None:
+        bar = self.rec_progress
+        bar.setRange(0, max(1, total))
+        bar.setValue(min(value, max(1, total)))
+        bar.setFormat(f"{phase}: {value} / {total} frames  (%p%)")
+        bar.setVisible(True)
+
+    def _update_rec_progress(self, worker) -> None:
+        p = worker.recording_progress()
+        if p is None:
+            if not self._recording:      # else the worker has not started it yet
+                self.rec_progress.setVisible(False)
+            return
+        if p["done"] and not p["capturing"]:
+            self.rec_progress.setVisible(False)
+            return
+        if p["capturing"]:
+            self._show_progress(p["captured"], p["total"], "Recording")
+        else:
+            self._show_progress(p["written"], p["total"], "Writing to disk")
 
     def _update_fps(self):
         # Rate of acquisition, not of what the display happened to draw.
@@ -741,11 +762,11 @@ class MainWindow(QMainWindow):
             "action": "record", "path": path, "n_frames": n, "fmt": fmt,
             "display_settings": self.current_display_settings(),
             "blosc": self._blosc_params(),
-            "stream": self.stream_check.isChecked(),
             "chunk_frames": int(self.chunk_spin.value())})
         self._rec_fps = self._fps
         self._recording = True
         self.rec_btn.setText(f"■ Stop recording (rec {n})")
+        self._show_progress(0, n, "Recording")
 
     def _save_snapshot(self):
         if not self._last_tree:

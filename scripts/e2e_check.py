@@ -218,7 +218,7 @@ def wait_for(predicate, timeout: float = 10.0, what: str = "") -> None:
 def stage_reader():
     """Open the saved stacks through the Saved images tab, as a user would."""
     tab = win.reader_tab
-    assert win.centre_tabs.count() == 2
+    assert win.centre_tabs.count() == 3
 
     assert win.open_in_reader(str(out / "seq.zarr")) is True
     wait_for(lambda: tab.view._arr is not None, what="zarr sequence frame 0")
