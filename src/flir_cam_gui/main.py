@@ -12,7 +12,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSlot
 from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QFileDialog,
                              QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
                              QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
-                             QPushButton,
+                             QPushButton, QScrollArea,
                              QSlider, QSpinBox, QSplitter, QTabWidget, QVBoxLayout,
                              QWidget)
 
@@ -286,7 +286,15 @@ class MainWindow(QMainWindow):
         self._update_rec_length()
         right_lay.addWidget(rec_grp)
         right_lay.addStretch(1)
-        split.addWidget(right)
+        # Keep the panel at its natural width and scroll instead of squeezing on low-DPI screens.
+        right.setMinimumWidth(right.sizeHint().width())
+        right_scroll = QScrollArea()
+        right_scroll.setWidgetResizable(True)
+        right_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        right_scroll.setMinimumWidth(right.minimumWidth() + 24)
+        right_scroll.setWidget(right)
+        split.addWidget(right_scroll)
 
         split.setSizes([430, 800, 300])
         split.setStretchFactor(1, 1)
