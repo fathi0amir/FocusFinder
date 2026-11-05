@@ -17,7 +17,7 @@ from . import camera as cam_defs
 COL_NAME, COL_VALUE, COL_ACCESS = 0, 1, 2
 
 
-class _NoWheelComboBox(QComboBox):
+class NoWheelComboBox(QComboBox):
     def wheelEvent(self, event):
         event.ignore()  # let the tree scroll instead of changing the value
 
@@ -152,7 +152,7 @@ class NodeBrowser(QWidget):
             cb.toggled.connect(lambda on, n=name: self._emit_write(n, bool(on)))
             return cb
         if kind == cam_defs.KIND_ENUMERATION:
-            combo = _NoWheelComboBox()
+            combo = NoWheelComboBox()
             for entry in node.get("entries") or []:
                 combo.addItem(entry.get("symbolic", str(entry.get("value"))))
             target = 0

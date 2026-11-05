@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDockWidget, QF
 from .correlation import CorrelationTab
 from .camera import DEMO_MODELS, PYSPIN_AVAILABLE, CameraLister, create_worker
 from .live_view import ORIENTATIONS, PALETTES, LiveViewWidget
-from .node_browser import NodeBrowser
+from .node_browser import NodeBrowser, NoWheelComboBox
 from .savers import write_sidecar
 from . import frame_reader
 
@@ -94,13 +94,13 @@ class MainWindow(QMainWindow):
         # --- source bar ---
         src_row = QHBoxLayout()
         src_row.addWidget(QLabel("Camera source:"))
-        self.source_combo = QComboBox()
+        self.source_combo = NoWheelComboBox()
         self.source_combo.addItem("Live (Spinnaker)")
         for key in DEMO_MODELS:
             self.source_combo.addItem(f"Simulate: {key}")
         src_row.addWidget(self.source_combo, 2)
         src_row.addWidget(QLabel("Camera:"))
-        self.camera_combo = QComboBox()
+        self.camera_combo = NoWheelComboBox()
         self.camera_combo.addItem("Searching for cameras\u2026")
         self.camera_combo.setToolTip(
             "FLIR cameras detected by Spinnaker - pick which one to connect to")
@@ -165,7 +165,7 @@ class MainWindow(QMainWindow):
         # display settings
         disp_grp = QGroupBox("Display")
         disp_form = QFormLayout(disp_grp)
-        self.palette_combo = QComboBox()
+        self.palette_combo = NoWheelComboBox()
         self.palette_combo.addItems(PALETTES)
         self.palette_combo.setCurrentIndex(0)
         self.palette_combo.currentTextChanged.connect(self._palette_changed)
@@ -178,7 +178,7 @@ class MainWindow(QMainWindow):
         self.auto_max_spin.setSpecialValueText("no limit")
         self.auto_max_spin.setToolTip("Upper limit for the auto contrast maximum (0 = no limit)")
         self.auto_max_spin.valueChanged.connect(self._contrast_changed)
-        self.bits_combo = QComboBox()
+        self.bits_combo = NoWheelComboBox()
         self.bits_combo.addItems(["8-bit", "10-bit", "12-bit", "16-bit"])
         self.bits_combo.setCurrentText("16-bit")
         self.bits_combo.setToolTip(
@@ -189,7 +189,7 @@ class MainWindow(QMainWindow):
         self.follow_mouse = QCheckBox("Crosshair follows mouse")
         self.follow_mouse.setChecked(True)
         self.follow_mouse.toggled.connect(self._follow_mouse_changed)
-        self.orientation_combo = QComboBox()
+        self.orientation_combo = NoWheelComboBox()
         self.orientation_combo.addItems(ORIENTATIONS)
         self.orientation_combo.currentTextChanged.connect(self._orientation_changed)
         self.reset_view_btn = QPushButton("Reset View")
@@ -231,14 +231,14 @@ class MainWindow(QMainWindow):
         # save last frame
         save_grp = QGroupBox("Save last frame")
         save_form = QFormLayout(save_grp)
-        self.save_fmt_combo = QComboBox()
+        self.save_fmt_combo = NoWheelComboBox()
         self.save_fmt_combo.addItems(["raw (binary + sidecar)", "HDF5 (+ sidecar)",
                                       "Zarr v3 + Blosc (+ sidecar)",
                                       "NumPy .npy (+ sidecar)",
                                       "TIFF (+ sidecar)"])
-        self.blosc_cname_combo = QComboBox()
+        self.blosc_cname_combo = NoWheelComboBox()
         self.blosc_cname_combo.addItems(["lz4", "zstd"])
-        self.blosc_clevel_combo = QComboBox()
+        self.blosc_clevel_combo = NoWheelComboBox()
         self.blosc_clevel_combo.addItems(["1", "2", "3"])
         self.save_btn = QPushButton("Save last frame...")
         self.save_btn.setEnabled(False)
@@ -252,7 +252,7 @@ class MainWindow(QMainWindow):
         # sequence record
         rec_grp = QGroupBox("Record sequence")
         rec_form = QFormLayout(rec_grp)
-        self.rec_fmt_combo = QComboBox()
+        self.rec_fmt_combo = NoWheelComboBox()
         self.rec_fmt_combo.addItems(["HDF5 (frames in one dataset)",
                                      "raw (folder of .raw + sidecar)",
                                      "Zarr (frames in one store)",
